@@ -59,12 +59,11 @@ To run, type:
 3. temporal setup
 
 #### Cohort
-1. All patients in the data who have had an encounter in the past 12 months and have not had any eGFRS or any abnormal eGFRs ever. 
-2. Exclude patients who had an eGFR in the past 3 months (we don't want them to come back for an eGFR)
-3. :warning: Expand to other indicators of prior CKD diagnosis such as prescriptions, diagnosis codes, etc.
+1. All patients in the data who have had an encounter in the past 12 months and have not had any previous diagnosis of X. 
+3. :warning: Expand to other indicators of prior diagnosis of X such as prescriptions, diagnosis codes, etc.
 
 #### Outcome to predict / Label - what and how far out?
-1. OUD in the next 12 months. 
+1. Diagnosis X in the next 12 months. 
 
 #### Temporal Decisions
 1. how often do we predict? every day, week, month or before an appointment
