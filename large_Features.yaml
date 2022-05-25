@@ -1,0 +1,533 @@
+config_version: 'v7'
+
+model_comment: 'cohort_past12m_visits_label1yr_newfeatures_testing_clean'
+random_seed: 173
+
+temporal_config:
+
+    feature_start_time: '1900-01-01'
+    feature_end_time: '2021-12-31'
+
+    label_start_time: '2014-01-01'
+    label_end_time: '2021-12-31' 
+
+    model_update_frequency: '1year'
+
+    # length of time defining a test set
+    test_durations: ['1year']
+    # defines how far back a training set reaches
+    max_training_histories: ['5year'] 
+
+    training_as_of_date_frequencies: ['1year'] 
+    test_as_of_date_frequencies: ['1year']
+    
+    label_timespans: ['1year']
+
+# change later to any event in the last x months and refine pre-ckd criteria
+# using presence of eGFR or medication or other things
+
+# Cohort (who is included on a given date): 
+# everyone who had an "encounter" in the past year and did not have a prior abnornal egfr
+
+cohort_config:
+  query: |
+    SELECT enc.entity_id from raw.cohort_encounters enc 
+   
+    left join 
+
+    (select entity_id from raw.egfr  where event_dttm  <  '{as_of_date}'::date
+    and normal_abnormal_result = 'a') abnormal_egfr on enc.entity_id=abnormal_egfr.entity_id
+
+    left join (select entity_id from raw.derived_cohort_conditions_ckd 
+    where event_dttm  <  '{as_of_date}'::date ) previous_ckd
+    on enc.entity_id=previous_ckd.entity_id
+    where
+    -- visited in the last year
+    VISIT_ADMIT_DTTM >  '{as_of_date}'::date - interval '1year' 
+    and VISIT_ADMIT_DTTM <  '{as_of_date}'::date
+    -- and do not have an abnormal egfr in the past 
+    and abnormal_egfr.entity_id is null 
+    -- and do not have a ckd diagnosis in the past
+    and previous_ckd.entity_id is null
+    group by enc.entity_id 
+  name: 'patients_encounters12m_no_abnormal_egfrs_no_prior_ckd'
+
+# label (who is included in the cohort on a given date): 
+# 1 = everyone who had an abnormal egfr in the next x years
+# 0 = everyone who only had normal egfr(s) in the next x years
+# null/unknown: no egfrds in the next x time
+
+
+label_config:
+  query: |
+
+    SELECT enc.entity_id,   
+    max(CASE when abnormal_sum > 0 then 1 
+    when abnormal_sum = 0 then 0
+    else NULL end) as outcome
+    from raw.cohort_encounters enc 
+   
+    left join 
+
+    (select entity_id from raw.egfr  where event_dttm  <  '{as_of_date}'::date
+    and normal_abnormal_result = 'a') abnormal_egfr on enc.entity_id=abnormal_egfr.entity_id
+
+    left join (select entity_id from raw.derived_cohort_conditions_ckd 
+    where event_dttm  <  '{as_of_date}'::date ) previous_ckd
+    on enc.entity_id=previous_ckd.entity_id
+    left join (select entity_id, 
+    sum(case when normal_abnormal_result = 'a' then 1 else 0 end) as abnormal_sum,
+    sum(case when normal_abnormal_result = 'n' then 1 else 0 end) as normal_sum,
+    count(*) as egfr_count
+    from raw.egfr
+    where event_dttm  >  '{as_of_date}'::date
+    and event_dttm  <  '{as_of_date}'::date + interval '{label_timespan}'
+    group by entity_id
+    ) future_egfr on enc.entity_id=future_egfr.entity_id
+    where
+    -- visited in the last year
+    VISIT_ADMIT_DTTM >  '{as_of_date}'::date - interval '1year' 
+    and VISIT_ADMIT_DTTM <  '{as_of_date}'::date
+    -- and do not have an abnormal egfr in the past 
+    and abnormal_egfr.entity_id is null 
+    -- and do not havea ckd diagnosis in the past
+    and previous_ckd.entity_id is null
+    group by enc.entity_id 
+
+  # include_missing_labels_in_train_as: false
+  name: 'had_abnormal_egfr_within_12months_for_cohort_12m_no_egfrckd'
+
+feature_aggregations:
+  -
+    prefix: 'demos'
+    from_obj: 'raw.cohort_demographics_dob'
+    knowledge_date_column: 'date_of_birth'
+
+    aggregates_imputation:
+      all:
+        type: 'mean'
+
+    categoricals_imputation:
+      all:
+        type: 'null_category'    
+
+    categoricals:
+      -
+        column: 'gender'
+        metrics:
+          - 'max' 
+        choices: [Female, Male]
+      -
+        column: 'race'
+        metrics:
+          - 'max' 
+        choice_query: 'select distinct race from raw.cohort_demographics_dob'
+      -
+        column: 'ethnicity'
+        metrics:
+          - 'max' 
+        choice_query: 'select distinct ethnicity from raw.cohort_demographics_dob'
+      -
+        column: 'marital_status'
+        metrics:
+          - 'max' 
+        choice_query: 'select distinct marital_status from raw.cohort_demographics_dob'
+
+    aggregates:
+      - # age in years
+        quantity:
+          age: "extract(year from age('{collate_date}'::date,  date_of_birth::date))"
+        metrics:
+          - 'max'
+   
+
+    intervals: ['all']
+    groups: ['entity_id']
+
+  -
+    prefix: 'egfrs'
+    from_obj: 'raw.egfr'
+    knowledge_date_column: 'event_dttm'
+
+    aggregates_imputation:
+            all:
+                type: 'zero_noflag'
+
+    aggregates:
+    - # total number of past egfrs
+      quantity:
+        total: "*"
+      metrics:
+        - 'count'
+
+    intervals: ['1month','3month', '6month', '12month','all']
+    groups: ['entity_id']      
+
+  -
+    prefix: 'encounters'
+    from_obj: 'raw.cohort_encounters'
+    knowledge_date_column: 'visit_admit_dttm'
+
+    aggregates_imputation:
+            all:
+                type: 'zero_noflag'
+
+    aggregates:
+    - # total number of past visits
+      quantity:
+        total: "*"
+      metrics:
+        - 'count'
+
+    - # total number of past ER visits
+      quantity:
+        ed_visits: "case when lower(encounter_class) = 'emergency' then 1 else 0 end"
+      metrics:
+        - 'sum'
+
+    - # total number of outpatient visits
+      quantity:
+        outpatient_visits: "case when (encounter_class = 'Outpatient') and encounter_type in ('Appointment', 'Office Visit','Hospital Encounter') then 1 else 0 end"
+      metrics:
+        - 'sum'
+
+    - # total number of inpatient visits
+      quantity:
+        inpatient_visits: "case when (encounter_class = 'Inpatient') and encounter_type in ('Appointment', 'Hospital Encounter') then 1 else 0 end"
+      metrics:
+        - 'sum'
+
+    - # total number of unique days visited in the past
+      quantity:
+        unique_days_visited: "distinct DATE(visit_admit_dttm)"
+      metrics:
+        - 'count'
+
+    intervals: ['1month','3month','6month','12month','all']
+    groups: ['entity_id']
+
+  - # days since last event
+    prefix: 'days_since'
+    from_obj: 'raw.cohort_encounters'
+    knowledge_date_column: 'visit_admit_dttm'
+    aggregates_imputation:
+      all:
+        type: 'mean'
+    aggregates:
+    - # days since last event
+      quantity:
+        last_encounter: "'{collate_date}'::DATE - visit_discharge_dttm::DATE"
+      metrics:
+          - 'min'
+          - 'max'
+      imputation:
+        all:
+          type: 'constant'
+          value: 10000
+    intervals: ['50y']
+    groups: ['entity_id']
+
+  - # procedures 
+    prefix: 'proc'
+    from_obj: |
+      (SELECT entity_id,
+           event_dttm,
+           upper(left(event_type,20)) as event_type,
+           upper(event_code) as event_code
+      FROM raw.cohort_procedures) AS procedures
+    knowledge_date_column: 'event_dttm'
+    aggregates_imputation:
+      all:
+        type: 'zero_noflag'
+
+    categoricals_imputation:
+      all:
+        type: 'null_category'    
+
+    categoricals:
+    - #  procedure types
+      column: event_type
+      choice_query: |
+              SELECT DISTINCT event_type_upper
+                      FROM (
+                               SELECT upper(left(event_type,20)) as event_type_upper, 
+                                      count(*) as counts
+                                FROM raw.cohort_procedures
+                                GROUP BY upper(left(event_type,20))
+                           ) AS cpt_counts where counts > 100
+              
+      metrics: 
+        - 'max'
+        - 'sum'
+
+    - #  procedure codes
+      column: event_code
+      choice_query: |
+              SELECT DISTINCT event_code_upper
+                      FROM (
+                               SELECT upper(event_code) as event_code_upper, 
+                                      count(*) as counts
+                                FROM raw.cohort_procedures
+                                GROUP BY upper(event_code) order by count(*) desc limit 50
+                           ) AS cpt_counts 
+              
+      metrics: 
+        - 'max'
+        - 'sum'
+
+    intervals: ['all']
+    groups: ['entity_id']
+
+  - # conditions / diagnosis -  cardiovascular disease, smoking, liver
+    prefix: 'cond'
+    from_obj: 'raw.cohort_conditions'
+    knowledge_date_column: 'event_dttm'
+    aggregates_imputation:
+      all:
+        type: 'zero_noflag'
+
+    categoricals_imputation:
+      all:
+        type: 'null_category'    
+
+    categoricals:
+    - # top 50 diagnosis
+      column: event_code
+      choice_query: |
+              SELECT DISTINCT event_code
+                      FROM (
+                               SELECT event_code, 
+                                      count(*)
+                                FROM raw.cohort_conditions
+                                GROUP BY event_code order by count(*) desc limit 50
+                           ) AS code_counts
+              
+      metrics: 
+        - 'max'
+        - 'sum'
+
+    aggregates:
+    - #number of conditions
+      quantity:
+        total: "*"
+      metrics: ['count']
+    - #
+      quantity:
+        diagnosis: "case when event_type like '%DIAGNOSES%' then 1 else 0 end"
+      metrics: ['sum']
+    - # 
+      quantity:
+        hypertension: "case when left(event_code,3) = '401' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        obesity: "case when left(event_code,3) ='278' or left(event_code,3) = 'E66' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        lipidemia: "case when left(event_code,3) = 'E78' or left(event_code,3)= '272' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        proteinuria: "case when left(event_code,3) = 'R80' or left(event_code,3)= '791' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        anemia: "case when left(event_code,2) = 'D5' or left(event_code,2) = 'D6' or left(event_code,2)= '28' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        chf: "case when left(event_code,3) = '428' or left(event_code,3)= 'I50' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        sub_abuse: "case when left(event_code,3) = '305' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        cancer: "case when left(event_code,3) = 'Z12' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        blood: "case when left(event_code,3)= '790' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        prediabetes: "case when event_name= 'Prediabetes' or event_name= 'Pre-diabetes' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        type2diabetes: "case when (event_name ilike '%type 2%' or  event_name ilike '%type ii%') and  (event_name ilike '%diabetes%') then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        anydiabetes: "case when event_name ilike '%diabetes%' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        mh: "case when event_name similar to '%anxiet%|%depress%|%bipolar%|%distress%|%psych%|%schizo%' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        hepatitis_b: "case when event_name ilike '%hepatitis%b%' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        sleep_apnea: "case when event_name ilike '%sleep apnea%' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        gest_diabetes: "case when event_name ilike '%gestational diabetes%' then 1 else 0 end"
+      metrics: ['sum']
+    - #
+      quantity:
+        allergies: "case when event_name ilike '%allerg%' then 1 else 0 end"
+      metrics: ['sum']
+    intervals: ['12month','all']
+    groups: ['entity_id']
+    
+  -
+    prefix: 'vitals'
+    from_obj: 'raw.cohort_vital_signs'
+    knowledge_date_column: 'event_dttm'
+
+    aggregates_imputation:
+            all:
+                type: 'mean'
+
+    aggregates:
+    - # total number of past vitals
+      quantity:
+        total: "*"
+      metrics:
+        - 'count'
+
+    - # bp
+      quantity:
+        bpsystolic: "case when event_name ilike 'BP' then split_part(event_value_string,'/',1)::decimal else null end"
+      metrics:
+          - 'min'
+          - 'max'
+          - 'avg'
+
+    - # bp
+      quantity:
+        bpsdiastolic: "case when event_name ilike 'BP' then split_part(event_value_string,'/',2)::decimal else null end"
+      metrics:
+          - 'min'
+          - 'max'
+ 
+    - # bmi
+      quantity:
+        bmi: "case when event_name ilike 'BMI%' then event_value_numeric else null end"
+      metrics:
+          - 'min'
+          - 'max'
+          - 'avg'
+
+    - # pulse
+      quantity:
+        pulse: "case when event_name ='Pulse' then event_value_numeric else null end"
+      metrics:
+          - 'min'
+          - 'max'
+          - 'avg'
+    - # SpO2
+      quantity:
+        SpO2: "case when event_name in ('SpO2','SpO2 (%)')  then event_value_numeric else null end"
+      metrics:
+          - 'min'
+          - 'max'
+          - 'avg'
+    - # respiration
+      quantity:
+        respiration: "case when event_name in ('Resp','Respirations (breaths/min)') then event_value_numeric else null end"
+      metrics:
+          - 'min'
+          - 'max'
+          - 'avg' 
+    intervals: ['1month','3month','6month','12month','all']
+    groups: ['entity_id']
+
+
+grid_config:
+
+      'triage.component.catwalk.baselines.rankers.PercentileRankOneFeature':
+        feature: ['egfrs_entity_id_all_total_count','demos_entity_id_all_age_max', 'conditions_entity_id_all_total_count']
+        descend: [True]
+
+      'sklearn.dummy.DummyClassifier':
+        strategy: ['prior']
+ 
+      'triage.component.catwalk.estimators.classifiers.ScaledLogisticRegression':
+        penalty: ['l2', 'l1']
+        C: [0.001, 0.01,0.1,1,2,5]
+   
+      'sklearn.tree.DecisionTreeClassifier':
+        criterion: ['gini']
+        max_depth: [1, 2, 5,10,50]
+        min_samples_split: [5,10]
+
+      'sklearn.ensemble.RandomForestClassifier':
+        n_estimators: [3000,10000]
+        criterion: ['gini']
+        max_depth: [1,10,100]
+        min_samples_split: [2,5,50]
+        n_jobs: [-1]     
+
+scoring:
+    testing_metric_groups:
+        -
+          metrics: [precision@, recall@]
+          thresholds:
+            percentiles: [1, 2, 3, 4, 5, 6, 7, 8, 9, 
+                              10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+                              20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 
+                              30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 
+                              40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+                              50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+                              60, 61, 62, 63, 64, 65, 66, 67, 68, 69,
+                              70, 71, 72, 73, 74, 75, 76, 77, 78, 79,
+                              80, 81, 82, 83, 84, 85, 86, 87, 88, 89,
+                              90, 91, 92, 93, 94, 95, 96, 97, 98, 99,
+                              100]
+            top_n: [100, 200, 500, 1000]
+        -
+          metrics: [roc_auc] 
+
+    training_metric_groups:
+      -
+          metrics: [precision@, recall@]
+          thresholds:
+            percentiles: [1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+
+# # need to fix
+#     subsets:
+#       -
+#           name: patients_with_egfrs_in_past_3m
+#           query: |
+#             SELECT DISTINCT entity_id
+#             FROM raw.egfr where 
+#             (event_dttm  <  '{as_of_date}'::date and 
+#             event_dttm  >  ('{as_of_date}'::date - interval '3months')
+            
+#       -
+#           name: patients_with_egfrs_in_past_3_to_6m
+#           query: |
+#             SELECT DISTINCT entity_id
+#             FROM raw.cohort_encounters where 
+#             (event_dttm  <  '{as_of_date}'::date - interval '3months' and 
+#             event_dttm  >  ('{as_of_date}'::date - interval '6months')
+
+bias_audit_config:
+    from_obj_table: 'raw.cohort_demographics_dob'
+    attribute_columns: ['gender', 'race']
+    knowledge_date_column: 'date_of_birth'
+    entity_id_column: 'entity_id'
+    ref_groups_method: 'predefined'
+    ref_groups:
+        'gender': 'Male'
+        'race': 'White'
+    thresholds:
+        percentiles: [1,5,10,20,50]
+        top_n: [100,500]
