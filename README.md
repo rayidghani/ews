@@ -2,6 +2,7 @@
 ## Scope
 ### Goal: 
 Early detection of X
+
 ### Interventions
 TBD
 
@@ -11,12 +12,12 @@ TBD
 - Predict risk of X in the next Y months
 - Baselines: 
   1. current practice
-  2. guidelines (need to add link)
+  2. guidelines
 - Metric: Precision at top k (:warning: need to determine k based on capacity)
 - Fairness metric: TPR disparity by Race, Gender, SES, access, etc.
 
 ### Validaton Study
-- Select x patient
+- Select x patients to run a trial
 - Measure precision compared to current practice and guidelines
 
 ### Ethical Issues
@@ -25,7 +26,7 @@ TBD
 - ...
 
 ## Formulation
-For every patient who has *been seen* at the hospital in the past *x* years and  has not been diagnosed with X yet (and has not had an eGFR in the past *y* months, identify the top k who are risk of X in the next z months to refer for clinical interventions. 
+For every patient who has *been seen* at the hospital in the past *y* years and  has not been diagnosed with X yet, identify the top k who are risk of X in the next z months to refer for clinical interventions. 
 
 ## Data Details
 ### Raw Data
@@ -51,11 +52,11 @@ To run, type:
 2. save predictions
 3. number of processors to use
 
- jupyter nbconvert --to=notebook --output=outputaudition --ExecutePreprocessor.enabled=True --ExecutePreprocessor.kernel_name=python audition2.ipynb
-
-
 ### Design Decisions
-[Spreadsheet to list different options for design decisions]()
+[Spreadsheet to list different options for design decisions](https://docs.google.com/spreadsheets/d/1NNBnxjeZ1ELEeLgSiNWq1riM1Q7tQL9vgUpvd7FgPzY/edit#gid=0)
+1. cohort definition
+2. label/outcome definition
+3. temporal setup
 
 #### Cohort
 1. All patients in the data who have had an encounter in the past 12 months and have not had any eGFRS or any abnormal eGFRs ever. 
