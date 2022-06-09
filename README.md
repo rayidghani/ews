@@ -43,9 +43,9 @@ We are using Triage to build and select models. Some backlground and tutorials o
 1. [triage_config.yaml](triage/triage_config.yaml): 
 
 #### Running triage
-Triage is installed on the server. It gets data from the postgresql server and runs models based on what we define in the config file above.
+Once triage is installed on the server, it gets data from the postgresql server and runs models based on what we define in the config file above.
 To run, type:
-``python3 run.py -c configfilename ''
+``python run.py -c configfilename ''
 
 **Choices to Make**
 1. replace flag
@@ -59,11 +59,11 @@ To run, type:
 3. temporal setup
 
 #### Cohort
-1. All patients in the data who have had an encounter in the past 12 months and have not had any previous diagnosis of X. 
+1. All patients in the data who have had an encounter in the past 12 months (we can change it to anything) and have not had any previous diagnosis of X. 
 3. :warning: Expand to other indicators of prior diagnosis of X such as prescriptions, diagnosis codes, etc.
 
 #### Outcome to predict / Label - what and how far out?
-1. Diagnosis X in the next 12 months. 
+1. Diagnosis X in the next 12 months (we can change it to any period). 
 
 #### Temporal Decisions
 1. how often do we predict? every day, week, month or before an appointment
