@@ -1,4 +1,4 @@
-config_version: 'v7'
+config_version: 'v8'
 
 model_comment: 'cohort_past12m_visits_label1yr_newfeatures_testing_clean'
 random_seed: 173
@@ -26,31 +26,39 @@ temporal_config:
 # change later to any event in the last x months and refine pre-ckd criteria
 # using presence of eGFR or medication or other things
 
-# Cohort (who is included on a given date): 
-# everyone who had an "encounter" in the past year and did not have a prior abnornal egfr
+# COHORT CONFIG
+# Cohorts are configured by passing a query with placeholders for the 'as_of_date'.
+#
+# You may pass a relative filepath to a cohort query to the 'filepath' key (preferred) or use the 'query' key to include the a cohort query directly in the config
+# Cohort queries should return a column named 'entity_id' and be parameterized with an '{as_of_date}', to select the entity_ids that should be included for a given date. The {as_of_date} will be replaced with each as_of_date that the experiment needs. The returned 'entity_id' must be an integer.
+#
+# You may enter a 'name' for your configuration.
+# This will be included in the metadata for each matrix and used to group models
+# If you don't pass one, the string 'default' will be used.
+#
+# This block is completely optional. If you don't specify it
+# it will default to all of the entities for which there are labels.
+# The name by default in this case will be 'all_entities'
+# cohort_config:
+#    filepath: 'example/cohort/past_events.sql'
+#    name: 'past_events'
 
-cohort_config:
-  query: |
-    SELECT enc.entity_id from raw.cohort_encounters enc 
-   
-    left join 
 
-    (select entity_id from raw.egfr  where event_dttm  <  '{as_of_date}'::date
-    and normal_abnormal_result = 'a') abnormal_egfr on enc.entity_id=abnormal_egfr.entity_id
-
-    left join (select entity_id from raw.derived_cohort_conditions_ckd 
-    where event_dttm  <  '{as_of_date}'::date ) previous_ckd
-    on enc.entity_id=previous_ckd.entity_id
-    where
-    -- visited in the last year
-    VISIT_ADMIT_DTTM >  '{as_of_date}'::date - interval '1year' 
-    and VISIT_ADMIT_DTTM <  '{as_of_date}'::date
-    -- and do not have an abnormal egfr in the past 
-    and abnormal_egfr.entity_id is null 
-    -- and do not have a ckd diagnosis in the past
-    and previous_ckd.entity_id is null
-    group by enc.entity_id 
-  name: 'patients_encounters12m_no_abnormal_egfrs_no_prior_ckd'
+# LABEL GENERATION
+# Labels are configured with a query with placeholders for the 'as_of_date' and 'label_timespan'. You can include a local path to a sql file containing the label query to the 'filepath' key (preferred) or include the query in the 'query' key
+#
+# The query must return two columns: entity_id and outcome, based on a given as_of_date and label_timespan.
+# The as_of_date and label_timespan must be represented by placeholders marked by curly brackets. The example below
+# reproduces the inspection outcome boolean-or logic:
+#
+# In addition, you can configure what label is given to entities that are in the matrix
+#   (see 'cohort_config' section) but that do not show up in this label query.
+# By default, these will show up as missing/null.
+# However, passing the key 'include_missing_labels_in_train_as' allows you to pick True or False.
+#
+# In addition to these configuration options, you can pass a name to apply to the label configuration
+# that will be present in matrix metadata for each matrix created by this experiment,
+# under the 'label_name' key. The default label_name is 'outcome'.
 
 # label (who is included in the cohort on a given date): 
 # 1 = everyone who had an abnormal egfr in the next x years
